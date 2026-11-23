@@ -7,6 +7,17 @@ test("rental amount uses unit duration and requested quantity", () => {
   assert.deepEqual(result, { durationDays: 8, totalAmount: 4800 });
 });
 
+test("rental quote rejects invalid prices, periods, dates and quantities", () => {
+  const validDates = { startDate: new Date("2026-12-01"), endDate: new Date("2026-12-02") };
+  for (const input of [
+    { price: 0, rentalType: "daily", quantity: 1, ...validDates },
+    { price: Number.NaN, rentalType: "daily", quantity: 1, ...validDates },
+    { price: 100, rentalType: "hourly", quantity: 1, ...validDates },
+    { price: 100, rentalType: "daily", quantity: 0, ...validDates },
+    { price: 100, rentalType: "daily", quantity: 1, startDate: validDates.endDate, endDate: validDates.startDate },
+  ]) assert.throws(() => calculateRental(input));
+});
+
 test("availability counts overlapping paid and recent pending bookings only", () => {
   const startDate = new Date("2026-12-01"); const endDate = new Date("2026-12-05"); const now = new Date("2026-11-22T00:00:00Z");
   const bookings = [
