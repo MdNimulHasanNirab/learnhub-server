@@ -7,11 +7,11 @@ const { ObjectId } = require("mongodb");
 const { connectDatabase, closeDatabase, collection } = require("./database");
 const { verifyToken, verifyRole, verifyRenter, verifyOwner, verifyAdmin, validateBody } = require("./middleware");
 const { calculateRental, hasQuantityForPeriod } = require("./utils/rental");
+const { roleChangeError } = require("./utils/admin-role");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
-const roles = { customer: "customer", owner: "owner", admin: "admin" };
 const categories = ["Construction Equipment", "Photography Equipment", "Vehicles & Transportation", "Agriculture Equipment", "Electronics", "Event Equipment"];
 const rentalTypes = ["daily", "weekly", "monthly"];
 const id = (value) => ObjectId.isValid(String(value)) ? new ObjectId(String(value)) : null;
@@ -186,7 +186,19 @@ app.post("/api/bookings/:id/checkout", verifyToken, verifyRenter, async (req, re
 });
 
 app.get("/api/admin/users", verifyToken, verifyAdmin, async (_req, res, next) => { try { ok(res, await collection("users").find({}, { projection: { password: 0 } }).sort({ createdAt: -1 }).toArray()); } catch (e) { next(e); } });
-app.patch("/api/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res, next) => { try { if (!Object.values(roles).includes(req.body.role)) return fail(res, 400, "Invalid role"); const result = await collection("users").updateOne({ _id: id(req.params.id) }, { $set: { role: req.body.role, updatedAt: new Date() } }); if (!result.matchedCount) return fail(res, 404, "User not found"); ok(res, { updated: true }); } catch (e) { next(e); } });
+app.patch("/api/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res, next) => {
+  try {
+    const targetId = id(req.params.id);
+    if (!targetId) return fail(res, 400, "Invalid user ID");
+    const target = await collection("users").findOne({ _id: targetId });
+    if (!target) return fail(res, 404, "User not found");
+    const adminCount = target.role === "admin" ? await collection("users").countDocuments({ role: "admin" }) : 0;
+    const error = roleChangeError({ actorId: req.user.id, targetId, targetRole: target.role, nextRole: req.body.role, adminCount });
+    if (error) return fail(res, error.status, error.message);
+    await collection("users").updateOne({ _id: targetId }, { $set: { role: req.body.role, updatedAt: new Date() } });
+    ok(res, { updated: true });
+  } catch (e) { next(e); }
+});
 app.get("/api/admin/equipment", verifyToken, verifyAdmin, async (_req, res, next) => { try { ok(res, await collection("equipment").find({}).sort({ createdAt: -1 }).toArray()); } catch (e) { next(e); } });
 app.get("/api/analytics/admin", verifyToken, verifyAdmin, async (_req, res, next) => { try { const [users, equipment, bookings, pending, completed, revenue, monthly] = await Promise.all([collection("users").countDocuments({}), collection("equipment").countDocuments({}), collection("bookings").countDocuments({}), collection("equipment").countDocuments({ status: "pending" }), collection("bookings").countDocuments({ status: "completed" }), collection("payments").aggregate([{ $match: { status: "paid" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]).toArray(), collection("bookings").aggregate([{ $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } }, total: { $sum: 1 } } }, { $sort: { _id: 1 } }, { $limit: 12 }]).toArray()]); ok(res, { users, equipment, bookings, pendingApprovals: pending, completedRentals: completed, totalRevenue: revenue[0]?.total || 0, monthlyBookings: monthly }); } catch (e) { next(e); } });
 app.get("/api/analytics/owner", verifyToken, verifyOwner, async (req, res, next) => { try { const ownerId = id(req.user.id); const [listed, completed, earnings, monthly] = await Promise.all([collection("equipment").countDocuments({ ownerId }), collection("bookings").countDocuments({ ownerId, status: "completed" }), collection("payments").aggregate([{ $match: { ownerId, status: "paid" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]).toArray(), collection("payments").aggregate([{ $match: { ownerId, status: "paid" } }, { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$paidAt" } }, total: { $sum: "$amount" } } }, { $sort: { _id: 1 } }, { $limit: 12 }]).toArray()]); ok(res, { listedEquipment: listed, completedRentals: completed, totalEarnings: earnings[0]?.total || 0, monthlyEarnings: monthly }); } catch (e) { next(e); } });
