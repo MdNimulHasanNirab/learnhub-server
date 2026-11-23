@@ -28,3 +28,20 @@ test("protected rental endpoint rejects unauthenticated requests", async (t) => 
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/bookings`);
   assert.equal(response.status, 401);
 });
+
+test("catalog returns sorted database pagination metadata", async (t) => {
+  const { collection } = require("../src/database");
+  const app = require("../src/server");
+  const createdAt = new Date();
+  await collection("equipment").insertOne({ name: "Pagination test low", location: "Dhaka", rentalPrice: 100, status: "approved", createdAt });
+  await collection("equipment").insertOne({ name: "Pagination test high", location: "Dhaka", rentalPrice: 900, status: "approved", createdAt });
+  const server = app.listen(0);
+  t.after(() => server.close());
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}/api/equipment?search=pagination%20test&limit=1&sort=price-asc`;
+  const first = await (await fetch(`${base}&page=1`)).json();
+  const second = await (await fetch(`${base}&page=2`)).json();
+  assert.equal(first.data.items[0].name, "Pagination test low");
+  assert.equal(second.data.items[0].name, "Pagination test high");
+  assert.deepEqual(first.data.pagination, { page: 1, limit: 1, total: 2, pages: 2 });
+});
