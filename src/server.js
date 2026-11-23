@@ -10,6 +10,7 @@ const { calculateRental, hasQuantityForPeriod } = require("./utils/rental");
 const { roleChangeError } = require("./utils/admin-role");
 const { bookingStatusError } = require("./utils/booking-status");
 const { escapeRegex } = require("./utils/search");
+const { buildAdminUserQuery } = require("./utils/admin-users");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -187,7 +188,7 @@ app.post("/api/bookings/:id/checkout", verifyToken, verifyRenter, async (req, re
   } catch (e) { next(e); }
 });
 
-app.get("/api/admin/users", verifyToken, verifyAdmin, async (_req, res, next) => { try { ok(res, await collection("users").find({}, { projection: { password: 0 } }).sort({ createdAt: -1 }).toArray()); } catch (e) { next(e); } });
+app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res, next) => { try { ok(res, await collection("users").find(buildAdminUserQuery(req.query.search), { projection: { password: 0 } }).sort({ createdAt: -1 }).toArray()); } catch (e) { next(e); } });
 app.patch("/api/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res, next) => {
   try {
     const targetId = id(req.params.id);
