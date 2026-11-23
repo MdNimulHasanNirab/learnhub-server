@@ -9,6 +9,7 @@ const { verifyToken, verifyRole, verifyRenter, verifyOwner, verifyAdmin, validat
 const { calculateRental, hasQuantityForPeriod } = require("./utils/rental");
 const { roleChangeError } = require("./utils/admin-role");
 const { bookingStatusError } = require("./utils/booking-status");
+const { escapeRegex } = require("./utils/search");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -54,7 +55,7 @@ app.get("/api/equipment", async (req, res, next) => {
   try {
     const query = { status: "approved" };
     const search = String(req.query.search || "").trim().slice(0, 100);
-    if (search) query.$or = ["name", "location", "category"].map((field) => ({ [field]: { $regex: search.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&"), $options: "i" } }));
+    if (search) query.$or = ["name", "location", "category"].map((field) => ({ [field]: { $regex: escapeRegex(search), $options: "i" } }));
     if (req.query.category) query.category = String(req.query.category);
     if (req.query.rentalType) query.rentalType = String(req.query.rentalType);
     if (req.query.availability === "available") query.availableQuantity = { $gt: 0 };
