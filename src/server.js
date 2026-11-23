@@ -8,6 +8,7 @@ const { connectDatabase, closeDatabase, collection } = require("./database");
 const { verifyToken, verifyRole, verifyRenter, verifyOwner, verifyAdmin, validateBody } = require("./middleware");
 const { calculateRental, hasQuantityForPeriod } = require("./utils/rental");
 const { roleChangeError } = require("./utils/admin-role");
+const { bookingStatusError } = require("./utils/booking-status");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -169,10 +170,10 @@ app.get("/api/checkout/:sessionId", verifyToken, verifyRenter, async (req, res, 
 });
 app.patch("/api/admin/bookings/:id/status", verifyToken, verifyAdmin, async (req, res, next) => {
   try {
-    if (!["completed", "cancelled"].includes(req.body.status)) return fail(res, 400, "Status must be completed or cancelled");
     const bookingId = id(req.params.id); const booking = bookingId && await collection("bookings").findOne({ _id: bookingId });
     if (!booking) return fail(res, 404, "Booking not found");
-    if (req.body.status === "completed" && booking.paymentStatus !== "paid") return fail(res, 409, "Only paid rentals can be completed");
+    const error = bookingStatusError({ nextStatus: req.body.status, paymentStatus: booking.paymentStatus });
+    if (error) return fail(res, error.status, error.message);
     await collection("bookings").updateOne({ _id: bookingId }, { $set: { status: req.body.status, updatedAt: new Date() } });
     ok(res, { status: req.body.status });
   } catch (e) { next(e); }
