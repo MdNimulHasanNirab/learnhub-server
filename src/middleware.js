@@ -17,7 +17,7 @@ async function syncUserFromPayload(payload) {
     user = {
       email,
       name: payload.name || email.split("@")[0],
-      role: email === process.env.INITIAL_ADMIN_EMAIL?.toLowerCase() ? "admin" : "student",
+      role: email === process.env.INITIAL_ADMIN_EMAIL?.toLowerCase() ? "admin" : "customer",
       image: payload.image || null,
       createdAt: new Date(),
     };
@@ -37,7 +37,7 @@ async function verifyToken(req, res, next) {
   }
   try {
     const token = authorization.slice(7);
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+    const clientUrl = process.env.BETTER_AUTH_URL || process.env.CLIENT_URL || "http://localhost:3000";
     const jwksUrl = `${clientUrl.replace(/\/$/, "")}/api/auth/jwks`;
     const jwks = getJwks(jwksUrl);
     const { payload } = await jwtVerify(token, jwks, { issuer: clientUrl, audience: clientUrl });
@@ -69,6 +69,10 @@ function verifyRole(...roles) {
   };
 }
 
+const verifyRenter = verifyRole("customer");
+const verifyOwner = verifyRole("owner");
+const verifyAdmin = verifyRole("admin");
+
 function validateBody(fields) {
   return (req, res, next) => {
     const missing = fields.filter((field) => req.body[field] === undefined || req.body[field] === "");
@@ -79,4 +83,4 @@ function validateBody(fields) {
   };
 }
 
-module.exports = { verifyToken, verifyRole, validateBody, syncUserFromPayload };
+module.exports = { verifyToken, verifyRole, verifyRenter, verifyOwner, verifyAdmin, validateBody, syncUserFromPayload };

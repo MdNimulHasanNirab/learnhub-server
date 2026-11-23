@@ -1,127 +1,73 @@
 const { MongoClient, ObjectId } = require("mongodb");
 
-const state = {
-  client: null,
-  db: null,
-  memory: false,
-  collections: new Map(),
-};
-
-const seedCourses = [
-  {
-    _id: new ObjectId(),
-    title: "Complete Web Development",
-    description: "Build modern full-stack web applications from fundamentals to deployment.",
-    category: "Development",
-    level: "Beginner",
-    price: 49,
-    thumbnail: "https://images.unsplash.com/photo-1498050108023-c5249f4df085",
-    mentorEmail: null,
-    status: "published",
-    createdAt: new Date(),
-  },
-];
-
-function collection(name) {
-  if (!state.memory) {
-    const mongoCollection = state.db.collection(name);
-    const normalize = (query = {}) => {
-      const normalized = { ...query };
-      if (normalized._id && typeof normalized._id === "string" && ObjectId.isValid(normalized._id)) {
-        normalized._id = new ObjectId(normalized._id);
-      }
-      return normalized;
-    };
-    return {
-      find: (query = {}) => mongoCollection.find(normalize(query)),
-      findOne: (query = {}) => mongoCollection.findOne(normalize(query)),
-      insertOne: (doc) => mongoCollection.insertOne(doc),
-      updateOne: (query, update, options) => mongoCollection.updateOne(normalize(query), update, options),
-      deleteOne: (query) => mongoCollection.deleteOne(normalize(query)),
-      deleteMany: (query) => mongoCollection.deleteMany(normalize(query)),
-    };
-  }
-  if (!state.collections.has(name)) state.collections.set(name, []);
-  return {
-    find: (query = {}) => ({
-      sort: () => ({ toArray: async () => state.collections.get(name).filter((item) => matches(item, query)) }),
-      limit: () => ({ toArray: async () => state.collections.get(name).filter((item) => matches(item, query)).slice(0, 50) }),
-      toArray: async () => state.collections.get(name).filter((item) => matches(item, query)),
-    }),
-    findOne: async (query) => state.collections.get(name).find((item) => matches(item, query)) || null,
-    insertOne: async (doc) => {
-      const inserted = { ...doc, _id: doc._id || new ObjectId() };
-      state.collections.get(name).push(inserted);
-      return { insertedId: inserted._id };
-    },
-    updateOne: async (query, update, options = {}) => {
-      const index = state.collections.get(name).findIndex((item) => matches(item, query));
-      if (index < 0 && update.$set && options.upsert) {
-        const inserted = { ...query, ...update.$set, _id: new ObjectId() };
-        state.collections.get(name).push(inserted);
-        return { matchedCount: 0, upsertedCount: 1 };
-      }
-      if (index < 0) return { matchedCount: 0 };
-      const doc = state.collections.get(name)[index];
-      state.collections.get(name)[index] = { ...doc, ...(update.$set || {}) };
-      if (update.$inc) {
-        for (const [key, value] of Object.entries(update.$inc)) {
-          doc[key] = (doc[key] || 0) + value;
-        }
-      }
-      return { matchedCount: 1 };
-    },
-    deleteOne: async (query) => {
-      const index = state.collections.get(name).findIndex((item) => matches(item, query));
-      if (index < 0) return { deletedCount: 0 };
-      state.collections.get(name).splice(index, 1);
-      return { deletedCount: 1 };
-    },
-    deleteMany: async (query) => {
-      const items = state.collections.get(name);
-      const remaining = items.filter((item) => !matches(item, query));
-      const deletedCount = items.length - remaining.length;
-      state.collections.set(name, remaining);
-      return { deletedCount };
-    },
-  };
-}
-
-function matches(doc, query) {
-  return Object.entries(query).every(([key, value]) => {
-    if (key === "_id" && doc[key]) return String(doc[key]) === String(value);
-    if (value instanceof ObjectId) return String(doc[key]) === String(value);
-    if (value && typeof value === "object" && value.$regex) {
-      const flags = value.$options || "";
-      return new RegExp(value.$regex, flags).test(String(doc[key] || ""));
+const state = { client: null, db: null, memory: new Map() };
+function matches(doc, query = {}) {
+  return Object.entries(query).every(([key, expected]) => {
+    if (key === "$or") return expected.some((part) => matches(doc, part));
+    const actual = doc[key];
+    if (expected && typeof expected === "object" && !(expected instanceof ObjectId) && !(expected instanceof Date)) {
+      if (expected.$regex && !(new RegExp(expected.$regex, expected.$options || "")).test(String(actual || ""))) return false;
+      if (expected.$gt !== undefined && !(actual > expected.$gt)) return false;
+      if (expected.$gte !== undefined && !(actual >= expected.$gte)) return false;
+      if (expected.$lt !== undefined && !(actual < expected.$lt)) return false;
+      if (expected.$lte !== undefined && !(actual <= expected.$lte)) return false;
+      if (expected.$ne !== undefined && actual === expected.$ne) return false;
+      if (Object.keys(expected).some((operator) => !["$regex", "$options", "$gt", "$gte", "$lt", "$lte", "$ne"].includes(operator))) return JSON.stringify(actual) === JSON.stringify(expected);
+      return true;
     }
-    return doc[key] === value;
+    return actual instanceof ObjectId || expected instanceof ObjectId ? String(actual) === String(expected) : actual === expected;
   });
 }
-
+function memoryCollection(name) {
+  if (!state.memory.has(name)) state.memory.set(name, []);
+  const rows = () => state.memory.get(name);
+  const cursor = (query = {}) => {
+    let result = rows().filter((row) => matches(row, query));
+    const api = {
+      sort(order) { result = [...result].sort((a, b) => { for (const [key, direction] of Object.entries(order || {})) { const cmp = a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0; if (cmp) return cmp * direction; } return 0; }); return api; },
+      skip(amount) { result = result.slice(amount); return api; },
+      limit(amount) { result = result.slice(0, amount); return api; },
+      async toArray() { return result; },
+    };
+    return api;
+  };
+  return {
+    find: cursor,
+    async findOne(query) { return rows().find((row) => matches(row, query)) || null; },
+    async countDocuments(query = {}) { return rows().filter((row) => matches(row, query)).length; },
+    async insertOne(doc) { const inserted = { ...doc, _id: doc._id || new ObjectId() }; rows().push(inserted); return { insertedId: inserted._id }; },
+    async updateOne(query, update, options = {}) {
+      const index = rows().findIndex((row) => matches(row, query));
+      if (index < 0 && options.upsert) { const row = { ...query, ...(update.$setOnInsert || {}), ...(update.$set || {}), _id: new ObjectId() }; rows().push(row); return { matchedCount: 0, upsertedCount: 1 }; }
+      if (index < 0) return { matchedCount: 0 };
+      const row = rows()[index]; Object.assign(row, update.$set || {});
+      for (const [key, amount] of Object.entries(update.$inc || {})) row[key] = (row[key] || 0) + amount;
+      return { matchedCount: 1 };
+    },
+    async deleteOne(query) { const index = rows().findIndex((row) => matches(row, query)); if (index < 0) return { deletedCount: 0 }; rows().splice(index, 1); return { deletedCount: 1 }; },
+    async deleteMany(query) { const remaining = rows().filter((row) => !matches(row, query)); const count = rows().length - remaining.length; state.memory.set(name, remaining); return { deletedCount: count }; },
+    aggregate(pipeline) { return { async toArray() { let data = rows(); for (const stage of pipeline) { if (stage.$match) data = data.filter((row) => matches(row, stage.$match)); if (stage.$group) { const key = stage.$group._id; const grouped = new Map(); for (const row of data) { const groupKey = key && typeof key === "object" ? Object.values(key)[0] : key; const k = typeof groupKey === "object" && groupKey.$dateToString ? new Date(row.createdAt || row.paidAt).toISOString().slice(0, 7) : row[key?.slice?.(1)] ?? null; if (!grouped.has(k)) grouped.set(k, { _id: k }); for (const [field, expr] of Object.entries(stage.$group)) if (field !== "_id" && expr.$sum !== undefined) grouped.get(k)[field] = (grouped.get(k)[field] || 0) + (expr.$sum === 1 ? 1 : row[expr.$sum.slice(1)] || 0); } data = [...grouped.values()]; } if (stage.$sort) data.sort((a, b) => String(a._id).localeCompare(String(b._id)) * (stage.$sort._id || 1)); if (stage.$limit) data = data.slice(0, stage.$limit); if (stage.$lookup) data = data.map((row) => ({ ...row, [stage.$lookup.as]: (state.memory.get(stage.$lookup.from) || []).filter((joined) => String(joined[stage.$lookup.foreignField]) === String(row[stage.$lookup.localField])) })); if (stage.$unwind) { const field = stage.$unwind.slice(1); data = data.flatMap((row) => (row[field] || []).map((joined) => ({ ...row, [field]: joined }))); } } return data; } }; },
+  };
+}
+function collection(name) { return state.db ? state.db.collection(name) : memoryCollection(name); }
 async function connectDatabase() {
   if (!process.env.MONGODB_URI) {
-    state.memory = true;
-    state.collections.set("courses", seedCourses);
-    console.warn("MONGODB_URI is not set; using the development memory database.");
-    return;
+    if (process.env.NODE_ENV === "production") throw new Error("MONGODB_URI is required in production");
+    console.warn("MONGODB_URI is missing; using ephemeral development storage."); return;
   }
-  state.client = new MongoClient(process.env.MONGODB_URI);
-  await state.client.connect();
-  state.db = state.client.db(process.env.MONGODB_DB_NAME || "learnhub");
-
+  state.client = new MongoClient(process.env.MONGODB_URI); await state.client.connect();
+  state.db = state.client.db(process.env.MONGODB_DB_NAME || "equipment_rental");
   await Promise.all([
     state.db.collection("users").createIndex({ email: 1 }, { unique: true }),
-    state.db.collection("courses").createIndex({ mentorEmail: 1, status: 1 }),
-    state.db.collection("lessons").createIndex({ courseId: 1, order: 1 }),
-    state.db.collection("enrollments").createIndex({ studentEmail: 1, courseId: 1 }, { unique: true }),
-    state.db.collection("progress").createIndex({ studentEmail: 1, courseId: 1, lessonId: 1 }, { unique: true }),
-    state.db.collection("payments").createIndex({ transactionId: 1 }, { unique: true }),
+    state.db.collection("equipment").createIndex({ status: 1, category: 1, rentalType: 1, rentalPrice: 1, createdAt: -1 }),
+    state.db.collection("equipment").createIndex({ name: "text", location: "text" }),
+    state.db.collection("equipment").createIndex({ ownerId: 1, createdAt: -1 }),
+    state.db.collection("bookings").createIndex({ customerId: 1, createdAt: -1 }),
+    state.db.collection("bookings").createIndex({ ownerId: 1, createdAt: -1 }),
+    state.db.collection("favorites").createIndex({ customerId: 1, equipmentId: 1 }, { unique: true }),
+    state.db.collection("payments").createIndex({ stripeSessionId: 1 }, { unique: true, sparse: true }),
+    state.db.collection("payments").createIndex({ stripePaymentIntentId: 1 }, { unique: true, sparse: true }),
   ]);
 }
-
-async function closeDatabase() {
-  if (state.client) await state.client.close();
-}
-
+async function closeDatabase() { if (state.client) await state.client.close(); }
 module.exports = { connectDatabase, closeDatabase, collection, ObjectId };

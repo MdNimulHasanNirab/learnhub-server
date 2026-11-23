@@ -1,7 +1,7 @@
 {
-  "name": "server",
+  "name": "rigrent-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "Equipment Rental Platform REST API",
   "main": "index.js",
   "scripts": {
     "dev": "node --watch src/server.js",

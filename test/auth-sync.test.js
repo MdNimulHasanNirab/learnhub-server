@@ -1,30 +1,28 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { ObjectId, connectDatabase, collection } = require("../src/database");
-const { syncUserFromPayload } = require("../src/middleware");
+const { syncUserFromPayload, verifyRole } = require("../src/middleware");
 
-test("user synchronization ignores untrusted token roles and preserves backend role", async () => {
+test("new users default to customer and token role claims cannot override stored roles", async () => {
   delete process.env.MONGODB_URI;
   process.env.INITIAL_ADMIN_EMAIL = "first-admin@example.com";
   await connectDatabase();
-
-  const student = await syncUserFromPayload({
-    email: "student@example.com",
-    name: "Student",
-    role: "admin",
-  });
-  assert.equal(student.role, "student");
-
-  await collection("users").updateOne({ _id: student._id }, { $set: { role: "mentor" } });
-  const refreshed = await syncUserFromPayload({ email: "student@example.com", role: "student" });
-  assert.equal(refreshed.role, "mentor");
-
-  const admin = await syncUserFromPayload({
-    email: "FIRST-ADMIN@example.com",
-    role: "student",
-  });
+  const customer = await syncUserFromPayload({ email: "customer@example.com", name: "Customer", role: "admin" });
+  assert.equal(customer.role, "customer");
+  await collection("users").updateOne({ _id: customer._id }, { $set: { role: "owner" } });
+  const existing = await syncUserFromPayload({ email: "customer@example.com", role: "customer" });
+  assert.equal(existing.role, "owner");
+  const admin = await syncUserFromPayload({ email: "FIRST-ADMIN@example.com", role: "customer" });
   assert.equal(admin.role, "admin");
   assert.ok(admin._id instanceof ObjectId);
-
   delete process.env.INITIAL_ADMIN_EMAIL;
+});
+
+test("role middleware returns 403 for an authenticated user without permission", () => {
+  let status; let body; let called = false;
+  const res = { status(value) { status = value; return this; }, json(value) { body = value; return this; } };
+  verifyRole("admin")({ user: { role: "customer" } }, res, () => { called = true; });
+  assert.equal(status, 403);
+  assert.equal(body.message, "Forbidden");
+  assert.equal(called, false);
 });
