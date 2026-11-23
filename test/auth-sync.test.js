@@ -46,3 +46,12 @@ test("request validation reports required fields before handlers run", () => {
   assert.equal(body.message, "Missing fields: category");
   assert.equal(nextCalled, false);
 });
+
+test("each role guard admits only its matching role", () => {
+  const { verifyRenter, verifyOwner, verifyAdmin } = require("../src/middleware");
+  for (const [role, guard] of [["customer", verifyRenter], ["owner", verifyOwner], ["admin", verifyAdmin]]) {
+    let allowed = false;
+    guard({ user: { role } }, { status() { return this; }, json() { throw new Error("matching role was rejected"); } }, () => { allowed = true; });
+    assert.equal(allowed, true, `${role} guard should allow ${role}`);
+  }
+});
