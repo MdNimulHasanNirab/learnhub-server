@@ -26,3 +26,13 @@ test("role middleware returns 403 for an authenticated user without permission",
   assert.equal(body.message, "Forbidden");
   assert.equal(called, false);
 });
+
+test("token middleware rejects requests without a bearer token", async () => {
+  const { verifyToken } = require("../src/middleware");
+  let status; let body; let nextCalled = false;
+  const res = { status(value) { status = value; return this; }, json(value) { body = value; return this; } };
+  await verifyToken({ headers: {} }, res, () => { nextCalled = true; });
+  assert.equal(status, 401);
+  assert.equal(body.message, "Unauthorized");
+  assert.equal(nextCalled, false);
+});
