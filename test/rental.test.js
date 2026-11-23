@@ -28,3 +28,14 @@ test("availability counts overlapping paid and recent pending bookings only", ()
   assert.equal(hasQuantityForPeriod({ stock: 2, bookings, startDate, endDate, quantity: 1, now }), false);
   assert.equal(hasQuantityForPeriod({ stock: 2, bookings: bookings.slice(2), startDate, endDate, quantity: 2, now }), true);
 });
+
+test("availability treats adjacent dates as non-overlapping and releases expired holds", () => {
+  const now = new Date("2026-11-22T12:00:00Z");
+  const startDate = new Date("2026-12-04T00:00:00Z");
+  const endDate = new Date("2026-12-06T00:00:00Z");
+  const bookings = [
+    { startDate: new Date("2026-12-02T00:00:00Z"), endDate: startDate, quantity: 1, paymentStatus: "paid", status: "confirmed" },
+    { startDate, endDate, quantity: 1, paymentStatus: "unpaid", status: "pending_payment", createdAt: new Date(now.getTime() - 31 * 60 * 1000) },
+  ];
+  assert.equal(hasQuantityForPeriod({ stock: 1, bookings, startDate, endDate, quantity: 1, now }), true);
+});
