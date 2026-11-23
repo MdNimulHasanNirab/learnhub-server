@@ -36,3 +36,13 @@ test("token middleware rejects requests without a bearer token", async () => {
   assert.equal(body.message, "Unauthorized");
   assert.equal(nextCalled, false);
 });
+
+test("request validation reports required fields before handlers run", () => {
+  const { validateBody } = require("../src/middleware");
+  let status; let body; let nextCalled = false;
+  const res = { status(value) { status = value; return this; }, json(value) { body = value; return this; } };
+  validateBody(["name", "category"])({ body: { name: "Camera" } }, res, () => { nextCalled = true; });
+  assert.equal(status, 400);
+  assert.equal(body.message, "Missing fields: category");
+  assert.equal(nextCalled, false);
+});
