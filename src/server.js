@@ -24,6 +24,10 @@ const ok = (res, data, status = 200) => res.status(status).json({ success: true,
 const date = (value) => { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed; };
 
 app.use(cors({ origin: (process.env.CORS_ORIGINS || process.env.CLIENT_URL || "http://localhost:3000").split(",").map((origin) => origin.trim()), credentials: true }));
+// Vercel may reuse a function instance across requests; connect lazily once per instance.
+app.use(async (_req, _res, next) => {
+  try { await connectDatabase(); next(); } catch (error) { next(error); }
+});
 // Stripe must receive the unparsed body to validate the webhook signature.
 app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return fail(res, 503, "Stripe webhook is not configured");

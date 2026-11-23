@@ -1,6 +1,6 @@
 const { MongoClient, ObjectId } = require("mongodb");
 
-const state = { client: null, db: null, memory: new Map() };
+const state = { client: null, db: null, connecting: null, memory: new Map() };
 function matches(doc, query = {}) {
   return Object.entries(query).every(([key, expected]) => {
     if (key === "$or") return expected.some((part) => matches(doc, part));
@@ -51,23 +51,39 @@ function memoryCollection(name) {
 }
 function collection(name) { return state.db ? state.db.collection(name) : memoryCollection(name); }
 async function connectDatabase() {
+  if (state.db) return state.db;
+  if (state.connecting) return state.connecting;
   if (!process.env.MONGODB_URI) {
     if (process.env.NODE_ENV === "production") throw new Error("MONGODB_URI is required in production");
     console.warn("MONGODB_URI is missing; using ephemeral development storage."); return;
   }
-  state.client = new MongoClient(process.env.MONGODB_URI); await state.client.connect();
-  state.db = state.client.db(process.env.MONGODB_DB_NAME || "equipment_rental");
-  await Promise.all([
-    state.db.collection("users").createIndex({ email: 1 }, { unique: true }),
-    state.db.collection("equipment").createIndex({ status: 1, category: 1, rentalType: 1, rentalPrice: 1, createdAt: -1 }),
-    state.db.collection("equipment").createIndex({ name: "text", location: "text" }),
-    state.db.collection("equipment").createIndex({ ownerId: 1, createdAt: -1 }),
-    state.db.collection("bookings").createIndex({ customerId: 1, createdAt: -1 }),
-    state.db.collection("bookings").createIndex({ ownerId: 1, createdAt: -1 }),
-    state.db.collection("favorites").createIndex({ customerId: 1, equipmentId: 1 }, { unique: true }),
-    state.db.collection("payments").createIndex({ stripeSessionId: 1 }, { unique: true, sparse: true }),
-    state.db.collection("payments").createIndex({ stripePaymentIntentId: 1 }, { unique: true, sparse: true }),
-  ]);
+  state.connecting = (async () => {
+    const client = new MongoClient(process.env.MONGODB_URI);
+    try {
+      await client.connect();
+      const db = client.db(process.env.MONGODB_DB_NAME || "equipment_rental");
+      await Promise.all([
+        db.collection("users").createIndex({ email: 1 }, { unique: true }),
+        db.collection("equipment").createIndex({ status: 1, category: 1, rentalType: 1, rentalPrice: 1, createdAt: -1 }),
+        db.collection("equipment").createIndex({ name: "text", location: "text" }),
+        db.collection("equipment").createIndex({ ownerId: 1, createdAt: -1 }),
+        db.collection("bookings").createIndex({ customerId: 1, createdAt: -1 }),
+        db.collection("bookings").createIndex({ ownerId: 1, createdAt: -1 }),
+        db.collection("favorites").createIndex({ customerId: 1, equipmentId: 1 }, { unique: true }),
+        db.collection("payments").createIndex({ stripeSessionId: 1 }, { unique: true, sparse: true }),
+        db.collection("payments").createIndex({ stripePaymentIntentId: 1 }, { unique: true, sparse: true }),
+      ]);
+      state.client = client;
+      state.db = db;
+      return db;
+    } catch (error) {
+      await client.close().catch(() => {});
+      throw error;
+    } finally {
+      state.connecting = null;
+    }
+  })();
+  return state.connecting;
 }
 async function closeDatabase() { if (state.client) await state.client.close(); }
 module.exports = { connectDatabase, closeDatabase, collection, ObjectId };
